@@ -28,6 +28,8 @@ CORE_FILES = [
     "SKILL.md",
     "README.md",
     "README_EN.md",
+    "AGENTS.md",
+    "CLAUDE.md",
     "LICENSE",
     "references",
     "scripts",

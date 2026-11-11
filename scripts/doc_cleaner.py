@@ -4,7 +4,7 @@
 doc_cleaner.py — AI Clean Master 文档载体 (.docx / .md) 扫描与去 AI 味清理器
 
 支持：
-1. --scan: 扫描 Word (.docx) 或 Markdown (.md) 中的 AI 伪标签小字、空洞导语/结语、AI 黑话与 Emoji 噪音。
+1. --scan: 扫描 Word (.docx) 或 Markdown (.md) 中的 AI 伪标签小字、空洞导语/结语、AI 黑话与 Emoji 噪音 (严格保护受认证的合规/真实数据角标)。
 2. --apply: 删除指定的冗余段落，执行人味化文本改写并保留原文档标题样式与表格结构。
 """
 
@@ -14,13 +14,34 @@ import re
 import sys
 from pathlib import Path
 
-AI_BUZZWORDS = [
-    "赋能", "抓手", "闭环", "全链路", "多维度", "全方位", "深层次",
-    "底层逻辑", "顶层设计", "范式转移", "生态体系", "协同共振", "组合拳",
-    "颗粒度", "痛点剖析", "破局之道", "矩阵", "价值跃迁", "新生态",
-    "delve", "testament", "tapestry", "paradigm shift", "synergy", "holistic",
-    "empowering", "game-changer", "cutting-edge", "seamless", "leverage"
-]
+# ---------------------------------------------------------------------------
+# Robust 3-tier import fallback for industry_classifier
+# ---------------------------------------------------------------------------
+try:
+    from scripts.industry_classifier import (
+        is_protected_domain_footnote,
+        detect_buzzwords_bilingual,
+        detect_industry_and_language,
+    )
+except (ImportError, ModuleNotFoundError):
+    try:
+        from industry_classifier import (
+            is_protected_domain_footnote,
+            detect_buzzwords_bilingual,
+            detect_industry_and_language,
+        )
+    except (ImportError, ModuleNotFoundError):
+        _script_dir = Path(__file__).resolve().parent
+        if str(_script_dir) not in sys.path:
+            sys.path.insert(0, str(_script_dir))
+        _parent_dir = _script_dir.parent
+        if str(_parent_dir) not in sys.path:
+            sys.path.insert(0, str(_parent_dir))
+        from industry_classifier import (
+            is_protected_domain_footnote,
+            detect_buzzwords_bilingual,
+            detect_industry_and_language,
+        )
 
 EMOJI_SLOP_RE = re.compile(r"[✨🚀💡⚡🔥🎯🌐💎]+\s*")
 
@@ -29,17 +50,36 @@ def scan_doc(file_path: str) -> dict:
     p = Path(file_path)
     ext = p.suffix.lower()
     items = []
+    protected_footnotes = []
 
     if ext == ".docx":
         from docx import Document
         doc = Document(str(p))
+        full_text = "\n".join(para.text for para in doc.paragraphs if para.text)
+        ind_info = detect_industry_and_language(full_text)
+
         for i, para in enumerate(doc.paragraphs):
             txt = para.text.strip()
             if not txt:
                 continue
-            b_words = [w for w in AI_BUZZWORDS if w in txt]
+
+            # 优先判断是否属于严禁误删的行业真实合规声明
+            if is_protected_domain_footnote(txt):
+                protected_footnotes.append({
+                    "paragraph_index": i,
+                    "style": para.style.name if para.style else "Normal",
+                    "text": txt,
+                    "reason": "protected_domain_footnote",
+                })
+                continue
+
+            b_words = detect_buzzwords_bilingual(txt)
             has_emoji = bool(EMOJI_SLOP_RE.search(txt))
-            if b_words or has_emoji or txt.startswith(("SECTION", "CORE INSIGHT", "本页核心洞察", "注：以上")):
+            is_slop_kicker = txt.startswith(("SECTION", "CORE INSIGHT", "本页核心洞察")) or (
+                txt.startswith("注：以上") and not is_protected_domain_footnote(txt)
+            )
+
+            if b_words or has_emoji or is_slop_kicker:
                 items.append({
                     "paragraph_index": i,
                     "style": para.style.name if para.style else "Normal",
@@ -48,14 +88,28 @@ def scan_doc(file_path: str) -> dict:
                     "has_emoji_slop": has_emoji,
                 })
     else:
-        lines = p.read_text(encoding="utf-8").splitlines()
+        full_text = p.read_text(encoding="utf-8")
+        ind_info = detect_industry_and_language(full_text)
+        lines = full_text.splitlines()
+
         for i, line in enumerate(lines):
             txt = line.strip()
             if not txt:
                 continue
-            b_words = [w for w in AI_BUZZWORDS if w in txt]
+
+            if is_protected_domain_footnote(txt):
+                protected_footnotes.append({
+                    "line_index": i,
+                    "text": txt,
+                    "reason": "protected_domain_footnote",
+                })
+                continue
+
+            b_words = detect_buzzwords_bilingual(txt)
             has_emoji = bool(EMOJI_SLOP_RE.search(txt))
-            if b_words or has_emoji or re.search(r"(SECTION\s*0?\d+|CORE INSIGHT|仅供演示参考)", txt, re.I):
+            is_slop_kicker = bool(re.search(r"(SECTION\s*0?\d+|CORE INSIGHT|仅供演示参考)", txt, re.I))
+
+            if b_words or has_emoji or is_slop_kicker:
                 items.append({
                     "line_index": i,
                     "text": txt,
@@ -66,7 +120,14 @@ def scan_doc(file_path: str) -> dict:
     return {
         "file": str(p.resolve()),
         "format": ext,
+        "language": ind_info.get("language", "zh"),
+        "industry_id": ind_info.get("industry_id", "tech_saas_ai"),
+        "industry_name_zh": ind_info.get("industry_name_zh", ""),
+        "industry_name_en": ind_info.get("industry_name_en", ""),
+        "confidence": ind_info.get("confidence", "default"),
         "flagged_count": len(items),
+        "protected_footnotes_count": len(protected_footnotes),
+        "protected_footnotes": protected_footnotes,
         "items": items,
     }
 
@@ -77,7 +138,11 @@ def apply_doc_plan(file_path: str, plan: dict, output_path: str) -> dict:
     out_p = Path(output_path)
     out_p.parent.mkdir(parents=True, exist_ok=True)
 
-    stats = {"deleted_items": 0, "rewritten_items": 0}
+    stats = {
+        "deleted_items": 0,
+        "rewritten_items": 0,
+        "protected_footnotes_preserved": 0,
+    }
 
     if ext == ".docx":
         from docx import Document
@@ -97,6 +162,10 @@ def apply_doc_plan(file_path: str, plan: dict, output_path: str) -> dict:
 
         for idx in sorted(del_set, reverse=True):
             if 0 <= idx < len(doc.paragraphs):
+                para_txt = doc.paragraphs[idx].text.strip()
+                if is_protected_domain_footnote(para_txt) and not plan.get("force_delete_protected", False):
+                    stats["protected_footnotes_preserved"] += 1
+                    continue
                 el = doc.paragraphs[idx]._element
                 if el.getparent() is not None:
                     el.getparent().remove(el)
@@ -106,6 +175,9 @@ def apply_doc_plan(file_path: str, plan: dict, output_path: str) -> dict:
     else:
         content = p.read_text(encoding="utf-8")
         for block in plan.get("remove_exact", []):
+            if is_protected_domain_footnote(block) and not plan.get("force_remove_protected", False):
+                stats["protected_footnotes_preserved"] += 1
+                continue
             if block in content:
                 content = content.replace(block, "")
                 stats["deleted_items"] += 1

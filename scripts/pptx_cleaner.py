@@ -4,8 +4,8 @@
 pptx_cleaner.py — AI Clean Master PPTX 连盒带字清理、人味化改写与智能视觉提权执行器
 
 支持操作：
-1. delete_shape_ids: 连盒带字删除指定文本框及其配对的背景胶囊框/底栏条
-2. delete_paragraphs: 删除卡片文本框内同义反复的凑数小字段落
+1. delete_shape_ids: 连盒带字删除指定文本框及其配对的背景胶囊框/底栏条 (严格保护真实行业合规角标)
+2. delete_paragraphs: 删除卡片文本框内同义反复的凑数小字段落 (严格保护真实行业合规角标)
 3. rewrites: 保样式替换核心文案，并支持字号提权 (promote_pt / target_pt) 与垂直居中 (vertical_center)
 """
 
@@ -16,6 +16,29 @@ from pathlib import Path
 from pptx import Presentation
 from pptx.enum.text import MSO_ANCHOR
 from pptx.util import Pt
+
+# ---------------------------------------------------------------------------
+# 3-tier robust import for industry_classifier
+# ---------------------------------------------------------------------------
+try:
+    from scripts.industry_classifier import (
+        is_protected_domain_footnote,
+        INDUSTRY_PROFILES,
+    )
+except (ImportError, ModuleNotFoundError):
+    try:
+        from industry_classifier import (
+            is_protected_domain_footnote,
+            INDUSTRY_PROFILES,
+        )
+    except (ImportError, ModuleNotFoundError):
+        _scripts_dir = str(Path(__file__).resolve().parent)
+        if _scripts_dir not in sys.path:
+            sys.path.insert(0, _scripts_dir)
+        from industry_classifier import (
+            is_protected_domain_footnote,
+            INDUSTRY_PROFILES,
+        )
 
 
 def iter_shapes_recursive(shapes):
@@ -76,14 +99,18 @@ def replace_paragraph_text_preserve_style(paragraph, new_text: str, promote_pt: 
             paragraph.font.size = Pt(final_pt)
 
 
-def apply_pptx_plan(input_pptx: str, plan: dict, output_pptx: str) -> dict:
+def apply_pptx_plan(input_pptx: str, plan: dict, output_pptx: str, industry_id: str = None) -> dict:
     prs = Presentation(input_pptx)
     stats = {
         "deleted_shapes": 0,
         "deleted_paragraphs": 0,
         "rewritten_paragraphs": 0,
         "promoted_paragraphs": 0,
+        "protected_footnotes_preserved": 0,
     }
+    target_industry = plan.get("industry_id") or industry_id
+    if target_industry:
+        stats["industry_id"] = target_industry
 
     slide_plans = {sp["slide_index"]: sp for sp in plan.get("slides", [])}
 
@@ -102,6 +129,11 @@ def apply_pptx_plan(input_pptx: str, plan: dict, output_pptx: str) -> dict:
             paras = list(sp.text_frame.paragraphs)
             for p_idx in sorted(dp.get("paragraph_indices", []), reverse=True):
                 if 0 <= p_idx < len(paras) and len(sp.text_frame.paragraphs) > 1:
+                    p_text = paras[p_idx].text.strip()
+                    # 🛡️ 严格保护真实行业合规角标与统计说明段落，拒绝误删
+                    if is_protected_domain_footnote(p_text):
+                        stats["protected_footnotes_preserved"] += 1
+                        continue
                     if remove_paragraph_xml(paras[p_idx]):
                         stats["deleted_paragraphs"] += 1
 
@@ -130,7 +162,14 @@ def apply_pptx_plan(input_pptx: str, plan: dict, output_pptx: str) -> dict:
         # 3. 执行连盒带字删除 (小字文本框 + 配对胶囊框/底栏条)
         for del_id in s_plan.get("delete_shape_ids", []):
             sp = shape_map.get(del_id)
-            if sp is not None and remove_shape_xml(sp):
+            if sp is None:
+                continue
+            # 🛡️ 严格保护真实行业合规角标与统计说明文本框，拒绝误删
+            if getattr(sp, "has_text_frame", False) and sp.text_frame.text.strip():
+                if is_protected_domain_footnote(sp.text_frame.text):
+                    stats["protected_footnotes_preserved"] += 1
+                    continue
+            if remove_shape_xml(sp):
                 stats["deleted_shapes"] += 1
 
     out_path = Path(output_pptx)
@@ -145,13 +184,14 @@ def main():
     parser.add_argument("input_pptx", help="Input .pptx file path")
     parser.add_argument("plan_json", help="Path to JSON cleanup plan")
     parser.add_argument("-o", "--output", help="Output .pptx file path (defaults to <input>_cleaned.pptx)")
+    parser.add_argument("--industry", dest="industry_id", choices=list(INDUSTRY_PROFILES.keys()), default=None, help="Optional industry profile for reporting")
     args = parser.parse_args()
 
     in_path = Path(args.input_pptx)
     out_path = args.output or str(in_path.with_name(f"{in_path.stem}_cleaned{in_path.suffix}"))
     plan = json.loads(Path(args.plan_json).read_text(encoding="utf-8"))
 
-    stats = apply_pptx_plan(str(in_path), plan, out_path)
+    stats = apply_pptx_plan(str(in_path), plan, out_path, industry_id=args.industry_id)
     sys.stdout.buffer.write(json.dumps(stats, ensure_ascii=False, indent=2).encode("utf-8"))
     sys.stdout.buffer.write(b"\n")
 

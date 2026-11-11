@@ -6,10 +6,11 @@ web_cleaner.py — AI Clean Master 网站 / 前端页面 (HTML / React / Vue / S
 支持：
 1. --scan: 扫描 HTML/JSX/TSX/Vue/SVG 中的：
    - 发光小胶囊/伪英文状态徽章 (rounded-full / badge / uppercase tracking-wider + SECTION/AI-POWERED/SYSTEM ONLINE)
-   - Bento 卡片内的 text-xs / 10px~12px 凑数解释小字
+   - Bento 卡片内的 text-xs / 10px~12px 凑数解释小字 (严格保护受认证的合规/真实数据角标)
    - 页脚/底栏假大空 Slogan 与免责废话
    - ✨🚀💡⚡ 表情符号噪音与 AI 黑话
-2. --apply: 根据 JSON 计划执行连盒移除 DOM/标签节点、清理 Emoji、替换人味文案，并对保留的核心标题做字号 class 提权 (如 text-base -> text-lg font-semibold)。
+   - 10 大行业与双语自动识别及合规角标保护 (protected_footnotes)
+2. --apply: 根据 JSON 计划执行连盒移除 DOM/标签节点、清理 Emoji、替换人味文案，并对保留的核心标题做字号 class 提权。
 """
 
 import argparse
@@ -18,13 +19,37 @@ import re
 import sys
 from pathlib import Path
 
-AI_BUZZWORDS = [
-    "赋能", "抓手", "闭环", "全链路", "多维度", "全方位", "深层次",
-    "底层逻辑", "顶层设计", "范式转移", "生态体系", "协同共振", "组合拳",
-    "颗粒度", "痛点剖析", "破局之道", "矩阵", "价值跃迁", "新生态",
-    "delve", "testament", "tapestry", "paradigm shift", "synergy", "holistic",
-    "empowering", "game-changer", "cutting-edge", "seamless", "leverage"
-]
+# ---------------------------------------------------------------------------
+# Robust 3-tier import fallback for industry_classifier
+# ---------------------------------------------------------------------------
+try:
+    from scripts.industry_classifier import (
+        is_protected_domain_footnote,
+        detect_buzzwords_bilingual,
+        detect_industry_and_language,
+        is_redundant_subtext_bilingual,
+    )
+except (ImportError, ModuleNotFoundError):
+    try:
+        from industry_classifier import (
+            is_protected_domain_footnote,
+            detect_buzzwords_bilingual,
+            detect_industry_and_language,
+            is_redundant_subtext_bilingual,
+        )
+    except (ImportError, ModuleNotFoundError):
+        _script_dir = Path(__file__).resolve().parent
+        if str(_script_dir) not in sys.path:
+            sys.path.insert(0, str(_script_dir))
+        _parent_dir = _script_dir.parent
+        if str(_parent_dir) not in sys.path:
+            sys.path.insert(0, str(_parent_dir))
+        from industry_classifier import (
+            is_protected_domain_footnote,
+            detect_buzzwords_bilingual,
+            detect_industry_and_language,
+            is_redundant_subtext_bilingual,
+        )
 
 EMOJI_SLOP_RE = re.compile(r"[✨🚀💡⚡🔥🎯🌐💎]+\s*")
 
@@ -40,8 +65,8 @@ BADGE_TEXT_RE = re.compile(
 )
 
 SMALL_SUBTEXT_RE = re.compile(
-    r"<(?P<tag>p|span|div|small)\b(?P<attrs>[^>]*(?:text-xs|text-\[1[012]px\]|font-size:\s*1[012]px)[^>]*)>(?P<inner>[^<]{4,200})</(?P=tag)>",
-    re.I,
+    r"<(?P<tag>p|span|div|small)\b(?P<attrs>[^>]*(?:text-xs|text-\[1[012]px\]|font-size:\s*1[012]px)[^>]*)>(?P<inner>(?:(?!</(?P=tag)>).){4,300})</(?P=tag)>",
+    re.I | re.DOTALL,
 )
 
 FOOTER_SLOP_RE = re.compile(
@@ -53,23 +78,48 @@ FOOTER_SLOP_RE = re.compile(
 def scan_web_file(file_path: str) -> dict:
     content = Path(file_path).read_text(encoding="utf-8")
     findings = []
+    protected_footnotes = []
 
+    # 1. 行业与双语自动识别
+    ind_info = detect_industry_and_language(content)
+
+    # 2. 扫描徽章/胶囊
     for m in BADGE_ELEMENT_RE.finditer(content):
         attrs = m.group("attrs")
         inner = m.group("inner").strip()
-        if ("rounded-full" in attrs or "badge" in attrs.lower() or "tracking-" in attrs or "uppercase" in attrs) and (
-            BADGE_TEXT_RE.search(inner) or EMOJI_SLOP_RE.search(inner)
-        ):
-            findings.append({
-                "type": "kicker_pill_badge",
-                "matched_html": m.group(0),
-                "text": inner,
-                "recommendation": "delete_node_with_box",
-            })
+        is_badge_style = ("rounded-full" in attrs or "badge" in attrs.lower() or "tracking-" in attrs or "uppercase" in attrs)
+        if is_badge_style:
+            if is_protected_domain_footnote(inner):
+                protected_footnotes.append({
+                    "type": "kicker_badge",
+                    "matched_html": m.group(0),
+                    "text": inner,
+                    "reason": "protected_compliance_or_standard",
+                })
+                continue
 
+            if BADGE_TEXT_RE.search(inner) or EMOJI_SLOP_RE.search(inner):
+                findings.append({
+                    "type": "kicker_pill_badge",
+                    "matched_html": m.group(0),
+                    "text": inner,
+                    "recommendation": "delete_node_with_box",
+                })
+
+    # 3. 扫描凑数小字并做真合规/真角标保护
     for m in SMALL_SUBTEXT_RE.finditer(content):
         inner = m.group("inner").strip()
-        if any(w in inner for w in ["通过", "实现", "赋能", "闭环", "全链路", "多维", "助力", "仅供参考", "+99"]):
+        if is_protected_domain_footnote(inner):
+            if not any(pf["matched_html"] == m.group(0) for pf in protected_footnotes):
+                protected_footnotes.append({
+                    "type": "redundant_micro_text",
+                    "matched_html": m.group(0),
+                    "text": inner,
+                    "reason": "protected_domain_footnote",
+                })
+            continue
+
+        if any(w in inner for w in ["通过", "实现", "赋能", "闭环", "全链路", "多维", "助力", "仅供参考", "+99"]) or is_redundant_subtext_bilingual(inner):
             findings.append({
                 "type": "redundant_micro_text",
                 "matched_html": m.group(0),
@@ -77,20 +127,40 @@ def scan_web_file(file_path: str) -> dict:
                 "recommendation": "delete_and_promote_sibling_heading",
             })
 
+    # 4. 扫描页脚废话并保护真实披露声明
     for m in FOOTER_SLOP_RE.finditer(content):
+        inner = m.group("inner").strip()
+        if is_protected_domain_footnote(inner):
+            if not any(pf["matched_html"] == m.group(0) for pf in protected_footnotes):
+                protected_footnotes.append({
+                    "type": "footer_slop",
+                    "matched_html": m.group(0),
+                    "text": inner,
+                    "reason": "protected_domain_footnote",
+                })
+            continue
+
         findings.append({
             "type": "footer_slop",
             "matched_html": m.group(0),
-            "text": m.group("inner").strip(),
+            "text": inner,
             "recommendation": "delete_node_with_box",
         })
 
-    buzzwords_found = [w for w in AI_BUZZWORDS if w in content]
+    # 5. 全文双语黑话与 Emoji 噪音检测
+    buzzwords_found = detect_buzzwords_bilingual(content)
     emojis_found = list(set(EMOJI_SLOP_RE.findall(content)))
 
     return {
         "file": str(Path(file_path).resolve()),
+        "language": ind_info.get("language", "zh"),
+        "industry_id": ind_info.get("industry_id", "tech_saas_ai"),
+        "industry_name_zh": ind_info.get("industry_name_zh", ""),
+        "industry_name_en": ind_info.get("industry_name_en", ""),
+        "confidence": ind_info.get("confidence", "default"),
         "findings_count": len(findings),
+        "protected_footnotes_count": len(protected_footnotes),
+        "protected_footnotes": protected_footnotes,
         "buzzwords": buzzwords_found,
         "emoji_slop": [e.strip() for e in emojis_found if e.strip()],
         "findings": findings,
@@ -104,17 +174,25 @@ def apply_web_plan(file_path: str, plan: dict, output_path: str) -> dict:
         "rewritten_snippets": 0,
         "promoted_classes": 0,
         "stripped_emojis": 0,
+        "protected_footnotes_preserved": 0,
     }
 
     # 1. 连盒移除指定的完整 HTML/JSX 节点或自动清理扫描出的胶囊框与底栏废话
     if plan.get("auto_remove_detected_badges", True):
         for item in scan_web_file(file_path)["findings"]:
             target_html = item["matched_html"]
+            # 严格防止误删已认定的保护角标
+            if is_protected_domain_footnote(item.get("text", "")):
+                stats["protected_footnotes_preserved"] += 1
+                continue
             if target_html in content:
                 content = content.replace(target_html, "")
                 stats["removed_blocks"] += 1
 
     for block in plan.get("remove_exact", []):
+        if is_protected_domain_footnote(block) and not plan.get("force_remove_protected", False):
+            stats["protected_footnotes_preserved"] += 1
+            continue
         if block in content:
             content = content.replace(block, "")
             stats["removed_blocks"] += 1

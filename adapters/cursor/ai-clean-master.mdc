@@ -1,25 +1,82 @@
 ---
-description: De-slop and humanize AI-generated PPTX, Images/Posters, Websites (HTML/React/Vue), and Documents (.docx/.md). Removes decorative pill badges, redundant micro-copy, footer disclaimers, and AI buzzwords while promoting core typography.
+description: De-slop and humanize AI-generated PPTX, Images/Posters, Websites (HTML/React/Vue), and Documents (.docx/.md). Removes decorative pill badges, redundant micro-copy, footer disclaimers, and AI buzzwords while promoting core typography across 10 major industries in 1:1 Chinese and English.
 globs: *.pptx, *.html, *.jsx, *.tsx, *.vue, *.svg, *.png, *.jpg, *.webp, *.docx, *.md
 alwaysApply: false
 ---
 
 # AI Clean Master (`ai-clean-master`) — Cursor Adapter
 
-When the user asks to clean up "AI-slop small text" (清理 AI 味小字), remove decorative pill badges / footer disclaimers (连盒删除伪英文胶囊与底栏废话), or humanize robotic phrasing (去 AI 味、优化表述更有人味感) across PPTs, images, websites, or documents:
+When the user asks to clean up "AI-slop small text" (清理 AI 味小字), remove decorative pill badges / footer disclaimers (连盒删除伪英文胶囊与底栏废话), eliminate robotic buzzwords (去 AI 黑话八股), or humanize copy with authentic industry tone across PPTs, images, websites, or documents:
 
-1. **Read the primary skill instructions**: Load `SKILL.md` and `references/ai-slop-dictionary.md` + `references/layout-promotion-rules.md`.
-2. **Stage 1 (Scan)**:
+## Mandatory References
+1. **Primary Skill Specification**: Load `SKILL.md`.
+2. **10-Industry Bilingual Playbooks**: Load `references/industry-playbooks-bilingual.md` for industry-specific AI slop blacklists, authentic domain whitelists, and 1:1 Before $\rightarrow$ After rewrite templates across 10 major industries.
+3. **AI Slop Dictionary**: Load `references/ai-slop-dictionary.md` for high-frequency Chinese & English buzzwords.
+4. **Layout Promotion Rules**: Load `references/layout-promotion-rules.md` for paired container removal, visual font promotion, and carrier-specific decision matrices.
+5. **Industry Classifier**: Reference `scripts/industry_classifier.py` for automated domain classification and protected footnote regexes.
+
+---
+
+## 5-Stage Execution Workflow
+
+### Stage 1: Automated Scan & Industry/Language Classification
+1. **Industry & Language Auto-Detection**:
+   - The carrier scanner scripts automatically run `detect_industry_and_language(text)` from `scripts/industry_classifier.py` to identify:
+     - `industry_id`: One of 10 industries (`tech_saas_ai`, `industrial_manufacturing`, `education_academia`, `finance_consulting`, `healthcare_biotech`, `retail_marketing`, `public_gov_smartcity`, `architecture_design`, `energy_sustainability_agtech`, `media_gaming_hospitality`).
+     - `language`: `zh`, `en`, or `bilingual`.
+     - `confidence`: `high`, `medium`, or `default`.
+     - `recommended_tone_zh` / `recommended_tone_en`.
+2. **Carrier-Specific Scan Command**:
    - `.pptx`: Run `python scripts/pptx_inspector.py "<input.pptx>"`
    - `.html/.jsx/.tsx/.vue/.svg`: Run `python scripts/web_cleaner.py --scan "<input>"`
-   - `.png/.jpg/.webp`: Run `python scripts/image_cleaner.py --scan "<input>"` + visual inspection
+   - `.png/.jpg/.webp`: Run `python scripts/image_cleaner.py --scan "<input>"` + inspect visual bounding boxes (`bbox`)
    - `.docx/.md`: Run `python scripts/doc_cleaner.py --scan "<input>"`
-3. **Stage 2 (`grill-me` One-by-One Alignment)**:
-   - Ask decisions **one question at a time**, always placing the `(Recommended)` option first:
-     - Q1: Target scenario & human tone (Pitch/Competition, Engineering/Tech, Classroom/Speech, Crisp Business).
-     - Q2: Box-and-text cleanup aggressiveness (`(Recommended) Full box-and-text removal + visual font promotion`).
-     - Q3: Borderline real metrics vs. AI fake badges (or image in-place redraw vs. editable layer reconstruction).
-4. **Stage 3 (Preview & Confirmation Gate)**:
-   - Present a `Before → After` markdown comparison table and wait for user approval before modifying files.
-5. **Stage 4 & 5 (Execute & Deliver)**:
-   - Run the matching cleaner script (`pptx_cleaner.py`, `web_cleaner.py`, `image_cleaner.py`, `doc_cleaner.py`) to output `<name>_cleaned.<ext>` without overwriting the original file.
+
+### Stage 2: `Grill-Me` One-by-One Alignment Interview
+Never modify files directly after scanning. Enter `grill-me` mode, asking decisions **one question at a time**, always placing the `(Recommended)` option first:
+1. **Q1 — Target Industry & Human Tone (10 Major Industries)**:
+   - Present the auto-detected industry as Option 1:
+     - `1. (Recommended: Auto-detected) <Detected Industry Name> — <Recommended Tone>`
+   - Provide the 10 major industries mapped to `references/industry-playbooks-bilingual.md`:
+     - 科技/SaaS/AI (Tech, SaaS & AI): Crisp Engineering & Product Proof (P99 latency, throughput, cost cut).
+     - 智能制造/工业 (Industrial & Manufacturing): Shop-Floor Precision (PLC, cycle time, repeatability, FPY).
+     - 教育/科研/竞赛 (Education & Academia): Rigorous Academic & Hands-On Pitch (ablation, control group, BOM cost).
+     - 金融/投资/咨询 (Finance & Consulting): Wall Street Executive Clarity (ARR, NDR, EBITDA, bps, payback).
+     - 医疗健康/生物 (Healthcare & Biotech): Evidence-Based Clinical Precision (sample size n, sensitivity, p-value).
+     - 消费零售/电商 (Retail & E-Commerce): Direct-to-Consumer Growth (ROAS, repeat purchase, AOV).
+     - 政务公用/智慧城市 (Public Sector & GovTech): Pragmatic Civic Delivery (permit turnaround cut, citizen coverage).
+     - 建筑地产/工业设计 (Architecture & Design): Tactile Materiality (anodized finish, wall thickness, FAR).
+     - 新能源/双碳/农业 (Clean Energy, ESG & AgTech): Measurable ESG (LCOE, tCO2e abated, drip irrigation).
+     - 文娱传媒/游戏 (Media, Gaming & Hospitality): Player & Guest Experience First (retention, 60fps, occupancy).
+2. **Q2 — Box-and-Text Cleanup Aggressiveness**:
+   - `1. (Recommended) Full box-and-text removal + visual font promotion (连盒全清 + 核心大字提权)`: Delete decorative kicker pill boxes, footer bars, and redundant card subtext; promote retained headline font size (+2pt~+4pt / `text-lg font-bold`).
+   - `2. Moderate cleanup (温和清理)`: Delete only outer kicker badges and footer disclaimers, while rewriting card subtext into concise human sentences without deleting containers.
+3. **Q3 — Footnote Protection & Real Data Verification**:
+   - **Strictly Protect Genuine Domain Footnotes**: Never delete statutory or empirical citations matching `is_protected_domain_footnote`:
+     - Clinical / Medical: `p < 0.05`, `95% CI`, `n=120`, `FDA 510(k)`, `NMPA`, `Phase I-IV`.
+     - Financial / Audit: `Non-GAAP`, `GAAP`, `EBITDA`, `SEC Form 10-K`, `CAGR`, `bps`.
+     - Standards / Engineering: `ISO`, `GB/T`, `IEC`, `IEEE`, `ASTM`, `P99 latency`, `SLA 99.95%`.
+     - ESG / Carbon: `Scope 1/2/3`, `tCO2e`, `LCOE`, `carbon footprint`.
+     - Academic / Media: `arXiv`, `NeurIPS`, `CVPR`, `UE5`, `4K@60fps`, `Copyright ©`.
+   - **Ruthlessly Purge Fake AI Disclaimers**: Remove fake placeholders (`仅供演示参考`, `for demonstration purposes only`, `dummy data`, `AI-generated`) box and text together.
+   - For images (`.png`/`.jpg`), confirm `(Recommended) In-place background erase + redrawing` vs. `Layer reconstruction`.
+
+### Stage 3: Preview & Confirmation Gate
+Present a structured `Before → After` comparison table and wait for user approval before modifying files:
+
+| Carrier / Location | Element Type | Cleanup Action | Before (AI Slop) | After (Authentic Copy & Layout) |
+|---|---|---|---|---|
+| PPTX Slide 1 (Top) | Kicker Badge | Delete Box & Text | `[SECTION 01 · STRATEGIC OVERVIEW]` (Pill) | *(Removed container & text; clean white-space)* |
+| PPTX Slide 1 (Card) | Headline + Subtext | Font Promotion + Rewrite | 多维算力底座全方位赋能大模型落地闭环 (16pt) + 凑数小字 (10pt) | **单台 RTX 4090 即可本地私有化部署，推理成本直降 65%** (20pt Bold Centered) |
+| PPTX Slide 1 (Footer) | Clinical Footnote | Retain & Clean Style | 彩色药丸框: `* FDA 510(k) Cleared, p < 0.01` | * FDA 510(k) Cleared, p < 0.01 (8pt Slate `#64748B`, strip pill box) |
+
+### Stage 4: Non-Destructive Execution & Layout Promotion
+Apply changes according to `references/layout-promotion-rules.md`:
+- **PPTX**: Remove paired AutoShape containers ($\text{IoA} \ge 0.75$, $H \le 2.8\times$), promote headline font size by `+2pt ~ +4pt`, center vertically.
+- **Web UI**: Remove `<span class="rounded-full ...">` badge DOM elements, remove redundant `<p>` subtext, promote headings to `text-lg font-bold leading-snug`, strip slop glow and emojis.
+- **Images**: Inpaint background with border ring sampling (`erase_only`), redraw promoted headlines with system bold fonts (`erase_and_redraw`), exclude protected footnotes from erase mask.
+- **Documents**: Unbox callout containers, normalize heading hierarchy, style pull-quotes with left border, preserve native `w:footnote` and `[^1]`.
+- **Output Contract**: Always write to `<name>_cleaned.<ext>` without overwriting the original file.
+
+### Stage 5: Delivery Report
+Present the output file link and clean statistics (boxes deleted, buzzwords rewritten, footnotes preserved, font promotions applied).

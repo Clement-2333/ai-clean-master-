@@ -10,6 +10,7 @@ pptx_inspector.py — AI Clean Master PPTX 病灶扫描与配对背景框检测�
 4. 伪造的装饰性微数据/角标与符号噪音 (fake_metric / emoji_slop)
 5. 小字背后的配对装饰色块 (paired_bg_shape_id，如胶囊框、底栏横条)
 6. 正文中的 AI 黑话与八股词条 (buzzwords)
+7. 10 大行业自动分类与真实合规角标保护 (protected_footnote)
 """
 
 import argparse
@@ -19,15 +20,37 @@ import sys
 from pathlib import Path
 from pptx import Presentation
 
-# 中英文 AI 高频黑话词库
-AI_BUZZWORDS = [
-    "赋能", "抓手", "闭环", "全链路", "多维度", "全方位", "深层次",
-    "底层逻辑", "顶层设计", "范式转移", "生态体系", "协同共振", "组合拳",
-    "颗粒度", "痛点剖析", "破局之道", "矩阵", "价值跃迁", "新生态",
-    "战略支点", "多维感知", "深度融合", "全渠道", "靶向发力", "精准施策",
-    "delve", "testament", "tapestry", "paradigm shift", "synergy", "holistic",
-    "empowering", "game-changer", "cutting-edge", "seamless", "leverage"
-]
+# ---------------------------------------------------------------------------
+# 3-tier robust import for industry_classifier
+# ---------------------------------------------------------------------------
+try:
+    from scripts.industry_classifier import (
+        detect_industry_and_language,
+        is_protected_domain_footnote,
+        detect_buzzwords_bilingual,
+        is_redundant_subtext_bilingual,
+        INDUSTRY_PROFILES,
+    )
+except (ImportError, ModuleNotFoundError):
+    try:
+        from industry_classifier import (
+            detect_industry_and_language,
+            is_protected_domain_footnote,
+            detect_buzzwords_bilingual,
+            is_redundant_subtext_bilingual,
+            INDUSTRY_PROFILES,
+        )
+    except (ImportError, ModuleNotFoundError):
+        _scripts_dir = str(Path(__file__).resolve().parent)
+        if _scripts_dir not in sys.path:
+            sys.path.insert(0, _scripts_dir)
+        from industry_classifier import (
+            detect_industry_and_language,
+            is_protected_domain_footnote,
+            detect_buzzwords_bilingual,
+            is_redundant_subtext_bilingual,
+            INDUSTRY_PROFILES,
+        )
 
 # 伪英文/八股眉题特征正则
 KICKER_PATTERNS = [
@@ -89,14 +112,24 @@ def calc_ioa(text_bbox, bg_bbox):
     return inter_area / text_area
 
 
-def detect_buzzwords(text):
-    return [w for w in AI_BUZZWORDS if w in text]
+def detect_buzzwords(text, domain_whitelist=None):
+    """检测中英双语黑话，同时排除行业专业术语白名单"""
+    raw_hits = detect_buzzwords_bilingual(text)
+    if domain_whitelist:
+        whitelist_set = {w.lower() for w in domain_whitelist}
+        return [w for w in raw_hits if w.lower() not in whitelist_set]
+    return raw_hits
 
 
 def classify_text_issue(text, font_pt, top_ratio, para_index, total_paras):
-    """判定单段或单框文本属于哪类 AI 味病灶"""
+    """判定单段或单框文本属于哪类 AI 味病灶，严格保护受认证的合规/真实数据角标"""
     clean = text.strip()
     if not clean:
+        return []
+
+    # 🛡️ 优先检查行业真实合规角标与专业数据声明保护网
+    # 若命中受保护的真实临床/审计/工程/ESG/学术标准声明，严禁标记为任何删除类病灶！
+    if is_protected_domain_footnote(clean):
         return []
 
     issues = []
@@ -122,32 +155,73 @@ def classify_text_issue(text, font_pt, top_ratio, para_index, total_paras):
     if EMOJI_SLOP_RE.search(clean):
         issues.append("emoji_slop")
 
-    # 5. 卡片内凑数解释小字：多段落中的副段落，字号偏小且含典型套话
+    # 5. 卡片内凑数解释小字：支持中英双语同义反复从句检测
     if para_index > 0 and total_paras >= 2 and font_pt <= 13.0:
-        if any(k in clean for k in ["通过", "实现", "助力", "构建", "赋能", "多维", "闭环", "有效", "体系", "全链路"]):
+        if is_redundant_subtext_bilingual(clean):
             issues.append("redundant_subtext")
     elif total_paras == 1 and font_pt <= 11.5 and 0.18 < top_ratio < 0.82:
-        if any(k in clean for k in ["通过", "实现", "助力", "构建", "赋能", "多维", "闭环"]):
+        if is_redundant_subtext_bilingual(clean):
             issues.append("redundant_subtext")
 
     return list(dict.fromkeys(issues))
 
 
-def inspect_pptx(pptx_path: str) -> dict:
+def inspect_pptx(pptx_path: str, industry_id: str = None) -> dict:
     prs = Presentation(pptx_path)
     slide_w = emu_to_inch(prs.slide_width)
     slide_h = emu_to_inch(prs.slide_height)
+
+    # 全文提取以用于 10 大行业与双语自动识别
+    full_presentation_texts = []
+    for s in prs.slides:
+        for sp, _ in iter_shapes_recursive(s.shapes):
+            if getattr(sp, "has_text_frame", False) and sp.text_frame.text.strip():
+                full_presentation_texts.append(sp.text_frame.text.strip())
+    full_text = "\n".join(full_presentation_texts)
+
+    if industry_id and industry_id in INDUSTRY_PROFILES:
+        prof = INDUSTRY_PROFILES[industry_id]
+        industry_info = {
+            "industry_id": industry_id,
+            "industry_name_zh": prof["name_zh"],
+            "industry_name_en": prof["name_en"],
+            "recommended_tone_zh": prof["tone_zh"],
+            "recommended_tone_en": prof["tone_en"],
+            "confidence": "specified",
+            "matched_domain_terms": [
+                kw for kw in prof.get("keywords_zh", []) + prof.get("keywords_en", [])
+                if kw.lower() in full_text.lower()
+            ][:10],
+        }
+        cjk_chars = len(re.findall(r"[\u4e00-\u9fa5]", full_text))
+        en_words = len(re.findall(r"[A-Za-z]{2,}", full_text))
+        if cjk_chars > 0 and en_words > 0:
+            industry_info["language"] = "zh" if cjk_chars > en_words * 1.5 else ("en" if en_words > cjk_chars * 2 else "bilingual")
+        elif cjk_chars > 0:
+            industry_info["language"] = "zh"
+        else:
+            industry_info["language"] = "en"
+    else:
+        industry_info = detect_industry_and_language(full_text)
+
+    domain_whitelist = (
+        industry_info.get("matched_domain_terms", [])
+        + INDUSTRY_PROFILES.get(industry_info.get("industry_id", ""), {}).get("keywords_zh", [])
+        + INDUSTRY_PROFILES.get(industry_info.get("industry_id", ""), {}).get("keywords_en", [])
+    )
 
     report = {
         "file": str(Path(pptx_path).resolve()),
         "slide_width_inch": slide_w,
         "slide_height_inch": slide_h,
         "slide_count": len(prs.slides),
+        "industry": industry_info,
         "slides": [],
         "summary": {
             "total_flagged_shapes": 0,
             "total_paired_bg_shapes": 0,
             "total_buzzword_hits": 0,
+            "total_protected_footnotes": 0,
         },
     }
 
@@ -186,8 +260,15 @@ def inspect_pptx(pptx_path: str) -> dict:
                     if not p_text:
                         continue
                     pt = get_effective_font_pt(p)
-                    p_issues = classify_text_issue(p_text, pt, top_ratio, p_i, total_p)
-                    b_words = detect_buzzwords(p_text)
+
+                    is_protected = is_protected_domain_footnote(p_text)
+                    if is_protected:
+                        p_issues = []
+                        report["summary"]["total_protected_footnotes"] += 1
+                    else:
+                        p_issues = classify_text_issue(p_text, pt, top_ratio, p_i, total_p)
+
+                    b_words = detect_buzzwords(p_text, domain_whitelist=domain_whitelist)
                     shape_issues.update(p_issues)
                     shape_buzzwords.update(b_words)
                     paras_info.append({
@@ -196,6 +277,7 @@ def inspect_pptx(pptx_path: str) -> dict:
                         "font_pt": pt,
                         "issues": p_issues,
                         "buzzwords": b_words,
+                        "is_protected_footnote": is_protected,
                     })
 
                 text_items.append({
@@ -209,6 +291,7 @@ def inspect_pptx(pptx_path: str) -> dict:
                     "paragraphs": paras_info,
                     "issues": sorted(shape_issues),
                     "buzzwords": sorted(shape_buzzwords),
+                    "is_protected_footnote": any(p.get("is_protected_footnote", False) for p in paras_info),
                     "paired_bg_shape_id": None,
                 })
 
@@ -252,19 +335,26 @@ def inspect_pptx(pptx_path: str) -> dict:
 
 
 def format_markdown_summary(report: dict) -> str:
+    ind = report.get("industry", {})
+    ind_str = f" | 行业识别：{ind.get('industry_name_zh', '未知')} ({ind.get('confidence', '')})" if ind else ""
+    prot_count = report["summary"].get("total_protected_footnotes", 0)
     lines = [
         f"# PPTX AI 味扫描诊断报告：`{Path(report['file']).name}`",
-        f"- 总页数：{report['slide_count']} 页 | 疑似病灶文本框：{report['summary']['total_flagged_shapes']} 个 | 配对胶囊/底栏色块：{report['summary']['total_paired_bg_shapes']} 个 | AI 黑话命中：{report['summary']['total_buzzword_hits']} 处\n",
+        f"- 总页数：{report['slide_count']} 页 | 疑似病灶文本框：{report['summary']['total_flagged_shapes']} 个 | 配对胶囊/底栏色块：{report['summary']['total_paired_bg_shapes']} 个 | AI 黑话命中：{report['summary']['total_buzzword_hits']} 处 | 受保护合规角标：{prot_count} 处{ind_str}\n",
     ]
     for slide in report["slides"]:
         lines.append(f"## 第 {slide['slide_index']} 页")
         for sp in slide["text_shapes"]:
             flags = sp["issues"] + ([f"黑话:{','.join(sp['buzzwords'])}"] if sp["buzzwords"] else [])
+            if sp.get("is_protected_footnote"):
+                flags.append("🛡️合规角标保护")
             flag_str = f" ⚠️ `{ ' | '.join(flags) }`" if flags else ""
             bg_str = f" (🔗 配对背景色块 `shape_id={sp['paired_bg_shape_id']}`)" if sp["paired_bg_shape_id"] else ""
             lines.append(f"- **Shape #{sp['shape_id']}** (`{sp['name']}`, top={sp['top_ratio']*100:.0f}%){flag_str}{bg_str}")
             for p in sp["paragraphs"]:
                 p_flag = f" -> `{','.join(p['issues'])}`" if p["issues"] else ""
+                if p.get("is_protected_footnote"):
+                    p_flag = " -> `🛡️受保护角标`"
                 lines.append(f"  - [P{p['paragraph_index']} | {p['font_pt']}pt] `{p['text']}`{p_flag}")
         lines.append("")
     return "\n".join(lines)
@@ -274,9 +364,10 @@ def main():
     parser = argparse.ArgumentParser(description="Scan a PPTX file for AI-slop micro-copy, decorative badges, and buzzwords.")
     parser.add_argument("input_pptx", help="Path to the input .pptx file")
     parser.add_argument("--json", dest="json_out", help="Optional path to save structured JSON report")
+    parser.add_argument("--industry", dest="industry_id", choices=list(INDUSTRY_PROFILES.keys()), default=None, help="Industry profile override (e.g. healthcare_biotech, industrial_manufacturing)")
     args = parser.parse_args()
 
-    report = inspect_pptx(args.input_pptx)
+    report = inspect_pptx(args.input_pptx, industry_id=args.industry_id)
     if args.json_out:
         Path(args.json_out).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     sys.stdout.buffer.write(format_markdown_summary(report).encode("utf-8"))
