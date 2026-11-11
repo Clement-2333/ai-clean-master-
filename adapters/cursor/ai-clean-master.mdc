@@ -1,0 +1,25 @@
+---
+description: De-slop and humanize AI-generated PPTX, Images/Posters, Websites (HTML/React/Vue), and Documents (.docx/.md). Removes decorative pill badges, redundant micro-copy, footer disclaimers, and AI buzzwords while promoting core typography.
+globs: *.pptx, *.html, *.jsx, *.tsx, *.vue, *.svg, *.png, *.jpg, *.webp, *.docx, *.md
+alwaysApply: false
+---
+
+# AI Clean Master (`ai-clean-master`) — Cursor Adapter
+
+When the user asks to clean up "AI-slop small text" (清理 AI 味小字), remove decorative pill badges / footer disclaimers (连盒删除伪英文胶囊与底栏废话), or humanize robotic phrasing (去 AI 味、优化表述更有人味感) across PPTs, images, websites, or documents:
+
+1. **Read the primary skill instructions**: Load `SKILL.md` and `references/ai-slop-dictionary.md` + `references/layout-promotion-rules.md`.
+2. **Stage 1 (Scan)**:
+   - `.pptx`: Run `python scripts/pptx_inspector.py "<input.pptx>"`
+   - `.html/.jsx/.tsx/.vue/.svg`: Run `python scripts/web_cleaner.py --scan "<input>"`
+   - `.png/.jpg/.webp`: Run `python scripts/image_cleaner.py --scan "<input>"` + visual inspection
+   - `.docx/.md`: Run `python scripts/doc_cleaner.py --scan "<input>"`
+3. **Stage 2 (`grill-me` One-by-One Alignment)**:
+   - Ask decisions **one question at a time**, always placing the `(Recommended)` option first:
+     - Q1: Target scenario & human tone (Pitch/Competition, Engineering/Tech, Classroom/Speech, Crisp Business).
+     - Q2: Box-and-text cleanup aggressiveness (`(Recommended) Full box-and-text removal + visual font promotion`).
+     - Q3: Borderline real metrics vs. AI fake badges (or image in-place redraw vs. editable layer reconstruction).
+4. **Stage 3 (Preview & Confirmation Gate)**:
+   - Present a `Before → After` markdown comparison table and wait for user approval before modifying files.
+5. **Stage 4 & 5 (Execute & Deliver)**:
+   - Run the matching cleaner script (`pptx_cleaner.py`, `web_cleaner.py`, `image_cleaner.py`, `doc_cleaner.py`) to output `<name>_cleaned.<ext>` without overwriting the original file.
